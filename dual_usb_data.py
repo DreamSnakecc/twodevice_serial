@@ -8,11 +8,11 @@ from datetime import datetime
 USB1_PORT = '/dev/ttyUSB0' #扭矩传感器
 USB2_PORT = '/dev/ttyUSB1' #stm32
 USB1_BAUD = 19200
-USB2_BAUD = 115200   # ✅ 可单独配置波特率
+USB2_BAUD = 19200   # ✅ 可单独配置波特率
 CSV_FILE = 'dual_usb_data.csv'
 
 usb1_data = {'timestamp': None, 'torque': None, 'speed': None}
-usb2_data = {'timestamp': None, 'speed': None}
+usb2_data = {'timestamp': None, 'speed': None,'current': None}
 lock = threading.Lock()
 
 # ------------------- CRC16 校验 -------------------
@@ -59,11 +59,15 @@ def decode_usb2(buffer: bytearray):
             if len(buffer) >= 6:
                 d1, d2, d3, d4 = buffer[2:6]
                 speed_raw = (d4 << 24) | (d3 << 16) | (d2 << 8) | d1
+                d5, d6, d7, d8 = buffer[6:10]
+                current_raw = (d8 << 24) | (d7 << 16) | (d6 << 8) | d5
                 # 处理有符号整型
                 if speed_raw & 0x80000000:
                     speed_raw -= 0x100000000
-                del buffer[:6]
-                return speed_raw/1000.0  # 转换为浮点数
+                if current_raw & 0x80000000:
+                    current_raw -= 0x100000000
+                del buffer[:10]  # 移除已处理的字节
+                return speed_raw/1000.0, current_raw/1000.0  # 转换为浮点数
             else:
                 break
         else:
@@ -104,19 +108,19 @@ def read_usb2():
         if not data:
             continue
         buffer += data
-        speed = decode_usb2(buffer)
+        speed, current = decode_usb2(buffer)
         if speed is not None:
             ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
             with lock:
-                usb2_data.update({'timestamp': ts, 'speed': speed})
-            print(f"[USB2] {ts}  speed={speed}")
+                usb2_data.update({'timestamp': ts, 'speed': speed, 'current': current})
+            print(f"[USB2] {ts}  speed={speed}  current={current}")
 
 
 # ------------------- 数据对齐 + 存储线程 -------------------
 def save_to_csv():
     with open(CSV_FILE, 'w', newline='') as f:
         writer = csv.writer(f)
-        writer.writerow(['timestamp', 'usb1_torque', 'usb1_speed', 'usb2_speed'])
+        writer.writerow(['timestamp', 'usb1_torque', 'usb1_speed', 'usb2_speed', 'usb2_current'])
         last_t1, last_t2 = None, None
 
         while True:
@@ -129,7 +133,8 @@ def save_to_csv():
                         ts,
                         usb1_data['torque'],
                         usb1_data['speed'],
-                        usb2_data['speed']
+                        usb2_data['speed'],
+                        usb2_data['current']
                     ])
                     f.flush()
                     last_t1, last_t2 = t1, t2
