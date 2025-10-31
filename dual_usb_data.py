@@ -48,7 +48,7 @@ def decode_usb1(frame: bytes):
     if speed & 0x8000:
         speed -= 0x10000
 
-    return torque/65535.0*100, speed
+    return torque/100.0, speed/100.0
 
 
 # ------------------- USB2 解码 -------------------
